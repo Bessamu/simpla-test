@@ -1,6 +1,6 @@
 <?php
 
-class ExportICMLRetailCRM extends Simpla
+class ExportICMLRetailCRM extends Okay
 {
     protected $config;
 
@@ -9,19 +9,19 @@ class ExportICMLRetailCRM extends Simpla
         $this->config = $config;
     }
 
-    
+
     /**
-      * Метод формирует XML вставку по каталогам товаров
-      */
+     * Метод формирует XML вставку по каталогам товаров
+     */
     private function makeCategories($domObject, $domElementCategories)
     {
         $categories = $this->categories->get_categories();
         if (!empty($categories)) {
             foreach ($categories as $index => $category) {
                 $categoryXml = $domElementCategories->appendChild($domObject->createElement('category', $category->name));
-    
+
                 $categoryXml->setAttribute('id', $category->id);
-    
+
                 if ($category->parent_id > 0) {
                     $categoryXml->setAttribute('parentId', $category->parent_id);
                 }
@@ -36,11 +36,11 @@ class ExportICMLRetailCRM extends Simpla
 
 
     /**
-      * Метод формирует XML вставку по товарам
-      */
+     * Метод формирует XML вставку по товарам
+     */
     private function makeOffers($domObject, $domElementOffers)
     {
-        $simpla = new Simpla();
+        $okay     = new Okay();
         $products = $this->products->get_products();
         if (!empty($products)) {
             //$items = '';
@@ -55,7 +55,7 @@ class ExportICMLRetailCRM extends Simpla
                         $offerXml = $domElementOffers->appendChild($currentOffer);
 
                         // Сформируем URL товара
-                        $url = $this->config['urlSimpla'] . '/products/' . $product->url;
+                        $url = $this->config['urlSimpla'] . '/catalog/' . $product->url;
                         $currentOffer->appendChild($domObject->createElement('url', $url));
 
                         // Цена товара
@@ -71,7 +71,7 @@ class ExportICMLRetailCRM extends Simpla
                         // Получим путь к первой картинке товара
                         $images = $this->products->get_images(array('product_id' => $product->id));
                         if (!empty($images)) {
-                            $image = $simpla->design->resize_modifier($images[0]->filename, 200, 200);
+                            $image = $okay->design->resize_modifier($images[0]->filename, 200, 200);
                             $is_console = PHP_SAPI == 'cli' || (!isset($_SERVER['DOCUMENT_ROOT']) && !isset($_SERVER['REQUEST_URI']));
                             if ($is_console) {
                                 $image = str_replace('http://', $this->config['urlSimpla'], $image);
@@ -92,7 +92,7 @@ class ExportICMLRetailCRM extends Simpla
 
                         // Определим, активен ли данный товар
                         if (!$product->visible) {
-                            $currentOffer->appendChild($domObject->createElement('productActivity', 0));; // Если товар активен, то ничего указывать не надо   
+                            $currentOffer->appendChild($domObject->createElement('productActivity', 0));; // Если товар активен, то ничего указывать не надо
                         }
 
                         // Соберём все свойства товаров

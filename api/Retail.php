@@ -3,15 +3,9 @@
 // Подключим зависимые библиотеки (API RetailCRM)
 require_once __DIR__ . '/../vendor/autoload.php';
 
-/**
- * Класс для работы с RetailCRM
- *
- * @copyright    2016 Oleg Ekhlakov
- * @author        Oleg Ekhlakov
- *
- */
+require_once('Okay.php');
 
-class Retail extends Simpla
+class Retail extends Okay
 {
     /**
      * @var integer Номер версии API RetailCRM
@@ -45,20 +39,42 @@ class Retail extends Simpla
         );
 
         try {
-            if ($method == 'ordersCreate' || $method == 'customersCreate') {
-                $response = $clientRetailCRM->request->$method($arData, $config['siteCode']);
-            } else if ($method == 'ordersPaymentCreate') {
-                $response = $clientRetailCRM->request->$method($arData);
-                //self::logger('ordersPaymentCreate method $response = ' . print_r($response, true), 'debug');
-            } else if ($method == 'ordersEdit' || $method == 'customersEdit' || $method == 'ordersPaymentEdit') {
-                $response = $clientRetailCRM->request->$method($arData, $by, $config['siteCode']);
-                //self::logger('Edit method $response = ' . print_r($response, true), 'debug');
+            switch ($method) {
+                case 'ordersCreate':
+                    $response = $clientRetailCRM->request->$method($arData, $config['siteCode']);
+                    break;
+                case 'customersCreate':
+                    $response = $clientRetailCRM->request->$method($arData, $config['siteCode']);
+                    break;
+                case 'ordersPaymentCreate':
+                    $response = $clientRetailCRM->request->$method($arData);
+                    break;
+                case 'ordersEdit' || 'customersEdit' || 'ordersPaymentEdit':
+                    $response = $clientRetailCRM->request->$method($arData, $by, $config['siteCode']);
+                    break;
+                case 'customersGet' || 'ordersGet':
+                    $response = $clientRetailCRM->request->$method($arData, $by, $config['siteCode']);
+                    break;
+                default:
+                    self::logger('Error: Method "' . $method . '" undefined - Retail.php', 'debug');
+                    return false;
             }
-            //self::logger('$response = ' . print_r($response, true), 'debug');
+            self::logger('$response = ' . print_r($response, true), 'debug');
 
             if ($response->isSuccessful() && (200 === $response->getStatusCode() || 201 === $response->getStatusCode())) {
-                self::logger('RetailCRM_Api::' . $method . ' - Success. Response Id = ' . $response->id, 'debug');
+                if ($method == 'customersEdit') {
+                    self::logger('Клиент (ID=' . $response->id . ') был изменен.', 'customers');
+                }
+                if ($method == 'customersCreate') {
+                    self::saveRetailIds(array(array('externalId' => $arData['externalId'], 'id' => $response->id)), 'user');
+                    self::logger('Создан новый клиент (ID=' . $response->id . ')', 'customers');
+                }
+                if ($method == 'ordersCreate') {
+                    $this->orders->update_order($arData['externalId'], (object) ['retail_id' => $response->id]);
+                    self::logger('Создан новый заказ (ID=' . $response->id . ')', 'orders');
+                }
                 if ($method == 'ordersEdit') {
+                    self::logger('Заказ (ID=' . $response->id . ') был изменен.', 'orders');
                     self::logger('ordersEdit $arData = ' . print_r($arData, true), 'debug');
 
                     // В заказе могли измениться данные оплаты - это нужно отправлять отдельным запросом
@@ -147,9 +163,6 @@ class Retail extends Simpla
             foreach ($purchases as $item) {
                 $arItemData = [
                     'initialPrice' => (float) $item->price,
-                    'offer'        => [
-                        'externalId' => $item->variant_id,
-                    ],
                     'productName'  => $item->product_name,
                     'quantity'     => (float) $item->amount,
                     //'properties'   => array (
@@ -158,10 +171,13 @@ class Retail extends Simpla
                     //  'value' => $item->variant_id
                     //)
                 ];
-                if ($product = $this->products->get_product($item->product_id)) {
+                if ($product = $this->products->get_product((int) $item->product_id)) {
                     if ($createdAt = $product->created) {
                         $arItemData['createdAt'] = $createdAt;
                     }
+                    $arItemData['offer'] = array(
+                        'externalId' => $product->external_id ? $product->external_id : $product->id,
+                    );
                 }
                 $items[] = $arItemData;
             }
@@ -174,6 +190,8 @@ class Retail extends Simpla
             'email'           => $order->email,
             'customerComment' => $order->comment,
             'managerComment'  => $order->note,
+            'discountManualAmount' => $order->coupon_discount, // Денежная скидка
+            'discountManualPercent' => $order->discount, // Процентная скидка
             'contragent'      => [
                 'contragentType' => 'individual', // Доступны только физ. лица
             ],
@@ -270,7 +288,7 @@ class Retail extends Simpla
                 // Способ оплаты в заказе Simpla CMS был указан
                 $arOrderData['payments'][0] = $arPayment;
                 // Ставим внешним идентификатором платежа номер заказа из Simpla CMS
-                $arOrderData['payments'][0]['externalId'] = 'p' . $order->id;
+                $arOrderData['payments'][0]['externalId'] = $config['siteCode'] . '-' . $order->id;
             }
         }
 
@@ -303,6 +321,12 @@ class Retail extends Simpla
 
         $arCustomerData = array(
             'externalId' => $user_id,
+            'phones'     => array(
+                array('number' => $user->phone)
+            ),
+            'address'    => array(
+                'text' => $user->address
+            ),
             'email'      => $user->email,
             'createdAt'  => $user->created,
             'contragent' => array(
@@ -642,7 +666,7 @@ class Retail extends Simpla
         }
 
         // Выбираем заказы
-        $query = $this->db->placehold("SELECT o.id, o.delivery_id, o.delivery_price, o.separate_delivery,
+        $query = $this->db->placehold("SELECT o.id, o.retail_id, o.delivery_id, o.delivery_price, o.separate_delivery,
           o.payment_method_id, o.paid, o.payment_date, o.closed, o.discount, o.coupon_code, o.coupon_discount,
           o.date, o.user_id, o.name, o.address, o.phone, o.email, o.comment, o.status,
           o.url, o.total_price, o.note
@@ -663,6 +687,7 @@ class Retail extends Simpla
      * Метод формирует массив из всех клиентов и заказов ИМ Simpla.
      * Если передана дата, то отбираются все созданные заказы после этого времени.
      * @param string $date Строка с датой. Начиная с этой даты будут отбираться заказы по дате создания
+     * @return null
      */
     public function fetch($date)
     {
@@ -682,7 +707,7 @@ class Retail extends Simpla
         /**
          * Массив идентификаторов выгружаемых клиентов из Simpla CMS
          */
-        $arUploadedCustiomerExternalIds = [];
+        $arUploadedCustomerExternalIds = [];
 
         for ($i = 1; $i <= ceil($countOrders / 50); $i++) {
             // Если заказов много, то разбиваем отправку по пакетам по 50 штук
@@ -699,34 +724,10 @@ class Retail extends Simpla
                         $user_id = (int) $order->user_id;
                         if ($user_id != 0) {
                             // Код клиента в Simpla <0> зарезервирован для экспресс клиентов (без регистрации)
-                            if (!isset($arUploadedCustiomerExternalIds[$user_id])) {
-                                $objCurrentCustomer = $this->users->get_user($user_id);
-                                $customerData       = [
-                                    'externalId' => $user_id,
-                                    'email'      => $objCurrentCustomer->email,
-                                    'phones'     => [ // Попробуем телефон извлечь из заказа, т.к. в таблице клиентов телефон не хранится
-                                        'number' => $currentOrder['phone'],
-                                    ],
-                                    'address'    => [ // Адрес также не хранится в таблице клиентов, возьмём из заказа
-                                        'text' => $currentOrder['delivery']['address']['text'],
-                                    ],
-                                    'createdAt'  => $objCurrentCustomer->created,
-                                    'contragent' => [
-                                        'contragentType' => 'individual', // Доступны только физ. лица
-                                    ],
-                                ];
-                                // Добавляем данные по имени и фамилии клинта заказа
-                                if (isset($objCurrentCustomer->name) && !empty($objCurrentCustomer->name)) {
-                                    $arCustomerName = explode(' ', $objCurrentCustomer->name);
-                                    if (!empty($arCustomerName[0])) {
-                                        $customerData['firstName'] = $arCustomerName[0];
-                                    }
-                                    if (!empty($arCustomerName[1])) {
-                                        $customerData['lastName'] = $arCustomerName[1];
-                                    }
-                                }
+                            if (!isset($arUploadedCustomerExternalIds[$user_id])) {
+                                $customerData = self::getUserRetailData($user_id);
                                 $customers[] = $customerData;
-                                $arUploadedCustiomerExternalIds[$user_id] = $user_id;
+                                $arUploadedCustomerExternalIds[$user_id] = $user_id;
                             }
                         }
                     }
@@ -829,7 +830,7 @@ class Retail extends Simpla
                 $path = $logDir . 'connect-error.log';
                 error_log($format . ' ' . $message, 3, $path);
                 break;
-            case 'customers':
+            case 'customers-error':
                 $path = $logDir . 'customers-error.log';
                 error_log($format . ' ' . $message, 3, $path);
                 break;
@@ -857,6 +858,14 @@ class Retail extends Simpla
                 $path = $logDir . 'history.log';
                 file_put_contents($path, $message);
                 break;
+            case 'customers':
+                $path = $logDir . 'customers.log';
+                error_log($format . $message, 3, $path);
+                break;
+            case 'orders':
+                $path = $logDir . 'orders.log';
+                error_log($format . $message, 3, $path);
+                break;
         }
 
     }
@@ -875,7 +884,26 @@ class Retail extends Simpla
         }
     }
 
-
+    /**
+     * Метод сохранения идентификаторов из RetailCrm в БД
+     * @param $arr array - массив Id и externalId
+     * @param $type string - товар или клиент предавать user или order
+     * @return bool
+     */
+    public function saveRetailIds($arr, $type) {
+        if (!empty($arr) or $type != 'user' or $type != 'order') {
+            $class = $type . 's';
+            $method = 'update_' . $type;
+            foreach ($arr as $a) {
+                $this->$class->$method($a['externalId'], (object)['retail_id' => $a['id']]);
+            }
+            return true;
+        } else {
+            self::logger('При сохранении retail_id произошла ошибка','orders-error');
+            echo 'При сохранении retail_id произошла ошибка';
+            return false;
+        }
+    }
     /**
      * Метод определяет, включение ли онлайн-интеграция с RetailCRM.
      * По-умолчанию, включена. Выключить можно, установив параметр конфигурации

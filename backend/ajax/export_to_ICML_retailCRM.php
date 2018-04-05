@@ -2,16 +2,16 @@
 $path_parts = pathinfo($_SERVER['SCRIPT_FILENAME']); // Определяем директорию скрипта (полезно для запуска из cron'а)
 chdir($path_parts['dirname']); // Задаём директорию выполнение скрипта
 
-require_once ('../../api/Simpla.php');
+require_once ('../../api/Okay.php');
 // Подключаем описание класса для формирования ICML-файла
 require_once ('../../integration/icml.php');
 // Подключаем общие инструменты
 require_once ('../../api/Retail.php');
 $config = Retail::config('../../integration/config.php');
 
-$simpla = new Simpla();
+$okay = new Okay();
 print_r("Check access level");
-if (!$simpla->managers->access('export')) return false; // Проверка прав доступа при запуске скрипта из админки Simpla
+if (!$okay->managers->access('export')) return false; // Проверка прав доступа при запуске скрипта из админки Simpla
 
 $export = new ExportICMLRetailCRM($config);
 $domObject = $export->generate();

@@ -2,7 +2,7 @@
 $path_parts = pathinfo($_SERVER['SCRIPT_FILENAME']); // Определяем директорию скрипта (полезно для запуска из cron'а)
 chdir($path_parts['dirname']); // Задаём директорию выполнения скрипта
 // Подключаем API Simpla
-require_once '../../api/Simpla.php';
+require_once '../../api/Okay.php';
 // Подключим зависимые библиотеки (API RetailCRM)
 require_once '../../vendor/autoload.php';
 // Подключаем класс с методами интеграции RetailCRM
@@ -31,7 +31,7 @@ if (file_exists($checkFile)) {
 } else {
     // Файла с датой последней выгрузки нет, поэтому считаем, что надо выгружать всё
     $lastDate = null;
-    Retail::logger('Готовимся к первоначальной выгрузке всех заказов', 'orders-info');
+    Retail::logger('Готовимся к первоначальной выгрузке всех клиентов', 'orders-info');
 }
 $data = $retail->fetch($lastDate);
 Retail::logger('Все данные для выгрузки: ' . print_r($data, true), 'orders-info');
@@ -40,46 +40,48 @@ Retail::logger('Все данные для выгрузки: ' . print_r($data, 
 if (!is_null($data) && is_array($data)) {
     foreach ($data as $pack) {
         try {
-            $response1 = $clientRetailCRM->request->customersUpload($pack['customers'], $config['siteCode']);
+            $responseCustomers = $clientRetailCRM->request->customersUpload($pack['customers'], $config['siteCode']);
             Retail::logger('RetailCRM_Api::customersUpload: Выгрузили следующих клиентов: ' . print_r($pack['customers'], true), 'orders-info');
         } catch (\RetailCrm\Exception\CurlException $e) {
             Retail::logger('RetailCRM_Api::customersUpload ' . $e->getMessage(), 'connect');
             echo 'Сетевые проблемы. Ошибка подключения к retailCRM: ' . $e->getMessage();
         }
         // Получаем подробности обработки клиентов
-        if (isset($response1)) {
-            if ($response1->isSuccessful()) {
-                if (460 === $response1->getStatusCode()) {
-                    Retail::logger('Ошибка при выгрузке некоторых клиентов: ' . print_r($response1, true), 'customers');
-                    echo 'Не все клиенты успешно выгружены в RetaiCRM.' . '<br>';
-                    echo sprintf(
-                        "Ошибка при выгрузке некоторых клиентов: [Статус HTTP-ответа %s] %s",
-                        $response1->getStatusCode(),
-                        $response1->getErrorMsg()
-                    );
-                    $arErrorText = $response1->getErrors();
-                    foreach ($arErrorText as $errorText) {
-                        echo $errorText . '<br>';
-                    }
-                }
-                $status = 'Все клиенты успешно выгружены в RetaiCRM.' . '<br>';
-            } else {
-                Retail::logger('Ошибка при выгрузке клиентов: ' . print_r($response1, true), 'customers');
+        if (isset($responseCustomers)) {
+            if ($responseCustomers->isSuccessful()) {
+                // Сохраняем идентификаторы клиентов RetailCRM
+                $customersIds = $responseCustomers->__get('uploadedCustomers');
+                $retail->saveRetailIds($customersIds, 'user');
+                $status = 'Все клиенты успешно выгружены в RetailCRM.' . '<br>';
+            } elseif (460 === $responseCustomers->getStatusCode()) {
+                Retail::logger('Ошибка при выгрузке некоторых клиентов: ' . print_r($responseCustomers, true), 'customers');
+                echo 'Не все клиенты успешно выгружены в RetailCRM.' . '<br>';
                 echo sprintf(
-                    "Ошибка при выгрузке клиентов: [Статус HTTP-ответа %s] %s",
-                    $response1->getStatusCode(),
-                    $response1->getErrorMsg()
-                ) . '<br>';
-                $arErrorText = $response1->getErrors();
-                foreach ($arErrorText as $errorText) {
-                    echo $errorText . '<br>';
+                    "Ошибка при выгрузке некоторых клиентов: [Статус HTTP-ответа %s] %s <br>",
+                    $responseCustomers->getStatusCode(),
+                    $responseCustomers->getErrorMsg()
+                );
+                $arErrorText = $responseCustomers->getErrors();
+                foreach ($arErrorText as $key => $errorText) {
+                    echo 'Customer ID:' . $pack['customers'][$key]['externalId'] . ' - ' . $errorText . '<br>';
+                }
+            } else {
+                Retail::logger('Ошибка при выгрузке клиентов: ' . print_r($responseCustomers, true), 'customers');
+                echo sprintf(
+                        "Ошибка при выгрузке клиентов: [Статус HTTP-ответа %s] %s",
+                        $responseCustomers->getStatusCode(),
+                        $responseCustomers->getErrorMsg()
+                    ) . '<br>';
+                $arErrorText = $responseCustomers->getErrors();
+                foreach ($arErrorText as $key => $errorText) {
+                    var_dump($responseCustomers->getStatusCode());
+                    echo 'Customer ID:' . $pack['customers'][$key]['externalId'] . ' - ' . $errorText . '<br>';
                 }
             }
         }
-
         // Переходим к выгрузке заказов
         try {
-            $response2 = $clientRetailCRM->request->ordersUpload($pack['orders'], $config['siteCode']);
+            $responseOrders = $clientRetailCRM->request->ordersUpload($pack['orders'], $config['siteCode']);
             Retail::logger(date('Y-m-d H:i:s'), 'history-log'); // Помечаем время последней выгрузки заказов
             Retail::logger('RetailCRM_Api::ordersUpload: Выгрузили следующие заказы', 'orders-info');
         } catch (\RetailCrm\Exception\CurlException $e) {
@@ -87,29 +89,32 @@ if (!is_null($data) && is_array($data)) {
             echo 'Сетевые проблемы. Ошибка подключения к retailCRM: ' . $e->getMessage();
         }
         // Получаем подробности обработки заказов
-        if (isset($response2)) {
-            if ($response2->isSuccessful() && 201 === $response2->getStatusCode()) {
+        if (isset($responseOrders)) {
+            if ($responseOrders->isSuccessful() && 201 === $responseOrders->getStatusCode()) {
                 echo $status . 'Все заказы успешно выгружены в RetaiCRM.' . '<br>';
-            } elseif ($response2->isSuccessful() && 460 === $response2->getStatusCode()) {
-                Retail::logger('Ошибка при выгрузке некоторых заказов: ' . print_r($response2, true), 'customers');
+                // Сохраняем идентификаторы заказов RetailCRM
+                $ordersIds = $responseOrders->__get('uploadedOrders');
+                $retail->saveRetailIds($ordersIds, 'order');
+            } elseif ($responseOrders->isSuccessful() && 460 === $responseOrders->getStatusCode()) {
+                Retail::logger('Ошибка при выгрузке некоторых заказов: ' . print_r($responseOrders, true), 'customers');
                 echo 'Не все заказы успешно выгружены в RetaiCRM.' . '<br>';
                 echo sprintf(
-                    "Ошибка при выгрузке заказов: [Статус HTTP-ответа %s] %s",
-                    $response1->getStatusCode(),
-                    $response1->getErrorMsg()
-                ) . '<br>';
-                $arErrorText = $response2->getErrors();
+                        "Ошибка при выгрузке заказов: [Статус HTTP-ответа %s] %s",
+                        $responseCustomers->getStatusCode(),
+                        $responseCustomers->getErrorMsg()
+                    ) . '<br>';
+                $arErrorText = $responseOrders->getErrors();
                 foreach ($arErrorText as $errorText) {
                     echo $errorText . '<br>';
                 }
             } else {
-                Retail::logger('Ошибка при выгрузке заказов: ' . print_r($response2, true), 'orders-error');
+                Retail::logger('Ошибка при выгрузке заказов: ' . print_r($responseOrders, true), 'orders-error');
                 echo sprintf(
-                    "Ошибка при выгрузке заказов: [Статус HTTP-ответа %s] %s",
-                    $response2->getStatusCode(),
-                    $response2->getErrorMsg()
-                ) . '<br>';
-                $arErrorText = $response2->getErrors();
+                        "Ошибка при выгрузке заказов: [Статус HTTP-ответа %s] %s",
+                        $responseOrders->getStatusCode(),
+                        $responseOrders->getErrorMsg()
+                    ) . '<br>';
+                $arErrorText = $responseOrders->getErrors();
                 foreach ($arErrorText as $errorText) {
                     echo $errorText . '<br>';
                 }

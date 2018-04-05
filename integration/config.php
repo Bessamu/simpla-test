@@ -6,16 +6,17 @@ return [
     'RETAIL_CRM' => [
         'IS_ONLINE_INTEGRATION' => true
     ],
-    'urlSimpla'     => 'https://sitename', // URL интернет-магазина - необходимо для запуска скриптов из консоли сервера
-    'urlRetail'     => 'https://sitename.retailcrm.ru', // URL RetailCRM, в которую будут выгружаться данные
-    'siteCode'      => 'SiteCode', // Код интернет-магазина, прописанный в настройках RetailCRM
-    'keyRetail'     => 'some-key', // Персональный ключ RetailCRM для доступа к API
+    'urlSimpla'     => 'https://www.pandoracaralarm.com', // URL интернет-магазина - необходимо для запуска скриптов из консоли сервера
+    'urlRetail'     => 'https://test-crm39.retailcrm.ru', // URL RetailCRM, в которую будут выгружаться данные
+    'siteCode'      => 'eng', // Код интернет-магазина, прописанный в настройках RetailCRM
+    'keyRetail'     => 'hKbuJxY47WJVzmYZw9uoH7joNM8zazQJ', // Персональный ключ RetailCRM для доступа к API
     'logDirectory'  => '../../integration/log/', // Каталог для логов работы скриптов выгрузок
 
     //Соответствие кодов типов доставок из базы Simpla и RetailCRM: array(<Код типа доставки Simpla> => <Код типа доставки RetailCRM>)
     'deliveryType'  => [
         1 => 'courier', // Доставка курьером
         2 => 'self-delivery', // Самовывоз
+        3 => 'ems', // EMS Post
     ],
 
     //Соответствие кодов типов оплат из базы Simpla и RetailCRM: array(<Код типа оплаты Simpla> => <Код типа оплаты RetailCRM>)
@@ -32,6 +33,8 @@ return [
         10 => 'bank-card', // Банковская карта
         11 => 'e-money', // Терминал
         12 => 'e-money', // Мобильный телефон
+        13 => 'e-money', // Интеркасса
+        15 => 'bank-card', // Bank card (Visa or MasterCard)
     ],
 
     // Соответствие кодов статусов оплат из базы Simpla и RetailCRM: array(<Код статуса оплаты Simpla> => <Код статуса оплаты RetailCRM>)
